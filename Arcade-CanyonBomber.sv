@@ -18,11 +18,15 @@ module emu
 	inout  [45:0] HPS_BUS,
 
 	//Base video clock. Usually equals to CLK_SYS.
-	output        VGA_CLK,
+	output        CLK_VIDEO,
 
-	//Multiple resolutions are supported using different VGA_CE rates.
+	//Multiple resolutions are supported using different CE_PIXEL rates.
 	//Must be based on CLK_VIDEO
-	output        VGA_CE,
+	output        CE_PIXEL,
+
+	//Video aspect ratio for HDMI. Most retro systems have ratio 4:3.
+	output [11:0] VIDEO_ARX,
+	output [11:0] VIDEO_ARY,
 
 	output  [7:0] VGA_R,
 	output  [7:0] VGA_G,
@@ -31,25 +35,10 @@ module emu
 	output        VGA_VS,
 	output        VGA_DE,    // = ~(VBlank | HBlank)
 	output        VGA_F1,
+	output [1:0]  VGA_SL,
+	output        VGA_SCALER, // Force VGA scaler
 
-	//Base video clock. Usually equals to CLK_SYS.
-	output        HDMI_CLK,
 
-	//Multiple resolutions are supported using different HDMI_CE rates.
-	//Must be based on CLK_VIDEO
-	output        HDMI_CE,
-
-	output  [7:0] HDMI_R,
-	output  [7:0] HDMI_G,
-	output  [7:0] HDMI_B,
-	output        HDMI_HS,
-	output        HDMI_VS,
-	output        HDMI_DE,   // = ~(VBlank | HBlank)
-	output  [1:0] HDMI_SL,   // scanlines fx
-
-	//Video aspect ratio for HDMI. Most retro systems have ratio 4:3.
-	output  [7:0] HDMI_ARX,
-	output  [7:0] HDMI_ARY,
 
 	output        LED_USER,  // 1 - ON, 0 - OFF.
 
@@ -59,6 +48,7 @@ module emu
 	output  [1:0] LED_POWER,
 	output  [1:0] LED_DISK,
 
+	input         CLK_AUDIO, // 24.576 MHz
 	output [15:0] AUDIO_L,
 	output [15:0] AUDIO_R,
 	output        AUDIO_S,   // 1 - signed audio samples, 0 - unsigned
@@ -75,6 +65,8 @@ module emu
 );
 
 assign VGA_F1    = 0;
+assign VGA_SCALER= 0;
+
 wire         CLK_JOY = CLK_50M;         //Assign clock between 40-50Mhz
 wire   [2:0] JOY_FLAG  = {status[30],status[31],status[29]}; //Assign 3 bits of status (31:29) o (63:61)
 wire         JOY_CLK, JOY_LOAD, JOY_SPLIT, JOY_MDSEL;
@@ -88,14 +80,17 @@ assign LED_USER  = ioctl_download;
 assign LED_DISK  = 0;
 assign LED_POWER = lamp;
 
-assign HDMI_ARX = status[1] ? 8'd16 : 8'd4;
-assign HDMI_ARY = status[1] ? 8'd9  : 8'd3;
+wire [1:0] ar = status[15:14];
+
+assign VIDEO_ARX =  (!ar) ? ( 8'd4) : (ar - 1'd1);
+assign VIDEO_ARY =  (!ar) ? ( 8'd3) : 12'd0;
+
 
 `include "build_id.v"
 localparam CONF_STR = {
 	"A.CANYON;;",
 	"-;",
-	"H0O1,Aspect Ratio,Original,Wide;",
+	"H0OEF,Aspect ratio,Original,Full Screen,[ARC1],[ARC2];",
 	"O35,Scandoubler Fx,None,HQ2x,CRT 25%,CRT 50%,CRT 75%;",  
 	"-;",
 	"OUV,UserIO Joystick,Off,DB9MD,DB15 ;",
@@ -122,8 +117,6 @@ wire        ioctl_download;
 wire        ioctl_wr;
 wire [24:0] ioctl_addr;
 wire [7:0] ioctl_data;
-
-wire [10:0] ps2_key;
 
 wire [15:0] joystick_0_USB, joystick_1_USB;
 
@@ -185,52 +178,20 @@ hps_io #(.STRLEN($size(CONF_STR)>>3)) hps_io
 
 	.joystick_0(joystick_0_USB),
 	.joystick_1(joystick_1_USB),
-	.joy_raw(joydb_1[5:0] | joydb_2[5:0]),
-.ps2_key(ps2_key)
+	.joy_raw(joydb_1[5:0] | joydb_2[5:0])
 );
 
 
 
-wire       pressed = ps2_key[9];
-wire [8:0] code    = ps2_key[8:0];
-always @(posedge clk_sys) begin
-	reg old_state;
-	old_state <= ps2_key[10];
-	
-	if(old_state != ps2_key[10]) begin
-		casex(code)
-			'h029: btn_fire        <= pressed; // space
-			'h014: btn_fire        <= pressed; // ctrl
 
-			'h005: btn_start_1     <= pressed; // F1
-			'h006: btn_start_2     <= pressed; // F2
-			// JPAC/IPAC/MAME Style Codes
-			'h016: btn_start_1     <= pressed; // 1
-			'h01E: btn_start_2     <= pressed; // 2
-			'h02E: btn_coin_1      <= pressed; // 5
-			'h036: btn_coin_2      <= pressed; // 6
-			'h01C: btn_fire_2      <= pressed; // A
-		endcase
-	end
-end
-
-reg btn_fire = 0;
-
-reg btn_start_1=0;
-reg btn_start_2=0;
-reg btn_coin_1=0;
-reg btn_coin_2=0;
-reg btn_fire_2=0;
-
-
-wire m_fire     = btn_fire   | joystick_0[4];
-wire m_fire_2   = btn_fire_2 | joystick_1[4];
+wire m_fire     = joystick_0[4];
+wire m_fire_2   = joystick_1[4];
 
 
 
-wire m_start1 = btn_start_1  | joystick_0[5];
-wire m_start2 = btn_start_2  | joystick_1[5];
-wire m_coin   = btn_coin_1   | joystick_0[6] | joystick_1[6];
+wire m_start1 = joystick_0[5]|joystick_0[5];
+wire m_start2 = joystick_0[6]|joystick_0[6];
+wire m_coin   = joystick_0[7] | joystick_1[7];
 
 
 
@@ -252,7 +213,7 @@ wire [7:0] SW1 = {1'b1,1'b0,status[9:8],1'b0,1'b0,status[13:12]};
 
 
 
-
+wire clk_6;
 wire videowht,videoblk,compositesync,lamp,lamp2;
 canyon_bomber canyon_bomber(
 	.Clk_50_I(CLK_50M),
@@ -270,7 +231,7 @@ canyon_bomber canyon_bomber(
 	.Audio1_O(audio1),
 	.Audio2_O(audio2),
 	.Coin1_I(~(m_coin)),
-	.Coin2_I(~(btn_coin_2)),
+	.Coin2_I(1'b1),
 	.Start1_I(~(m_start1)),
 	.Start2_I(~(m_start2)),
 	.Fire1_I(~m_fire),
@@ -329,7 +290,7 @@ end
 
 
 
-arcade_video #(298,298,9) arcade_video
+arcade_video #(298,9) arcade_video
 (
         .*,
 
@@ -340,8 +301,6 @@ arcade_video #(298,298,9) arcade_video
 	.VBlank(vblank),
 	.HSync(hs),
 	.VSync(vs),        
-	.no_rotate(1),
-	.rotate_ccw(0),
 		  
 	.fx(status[5:3])
 );
@@ -350,7 +309,7 @@ arcade_video #(298,298,9) arcade_video
 pll pll (
 	.refclk ( CLK_50M   ),
 	.rst(0),
-	.locked 		( locked    ),        // PLL is running stable
+	.locked 	( locked    ),        // PLL is running stable
 	.outclk_0	( clk_48	),        // 48 MHz
 	.outclk_1	( clk_12	)        // 12 MHz
 	 );
