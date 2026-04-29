@@ -16,5 +16,3 @@ set_global_assignment -name VHDL_FILE rtl/cpu_mem.vhd
 set_global_assignment -name VHDL_FILE rtl/canyon_bomber.vhd
 set_global_assignment -name SYSTEMVERILOG_FILE Arcade-CanyonBomber.sv
 set_global_assignment -name VHDL_FILE dpram.vhd
-set_global_assignment -name VERILOG_FILE rtl/joydb9md.v
-set_global_assignment -name VERILOG_FILE rtl/joydb15.v
